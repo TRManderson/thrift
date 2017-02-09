@@ -1,6 +1,8 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TemplateHaskell #-}
 --
 -- Licensed to the Apache Software Foundation (ASF) under one
 -- or more contributor license agreements. See the NOTICE file
@@ -30,6 +32,7 @@ module Thrift.Protocol
     , version1
     , bsToDouble
     , bsToDoubleLE
+    , defaultProtocol
     ) where
 
 import Control.Exception
@@ -52,29 +55,30 @@ import qualified Data.HashMap.Strict as Map
 import Thrift.Types
 import Thrift.Transport
 
-versionMask :: Int32
-versionMask = fromIntegral (0xffff0000 :: Word32)
+data Protocol = Protocol
+    { writeMessageBegin :: Transport -> (Text, MessageType, Int32) -> IO ()
+    , writeMessageEnd :: Transport -> IO ()
+    , readMessageBegin :: Transport -> IO (Text, MessageType, Int32)
+    , readMessageEnd :: Transport -> IO ()
+    , serializeVal :: Transport -> ThriftVal -> ByteString
+    , deserializeVal :: Transport -> ThriftType -> ByteString -> ThriftVal
+    , writeVal :: Transport -> ThriftVal -> IO ()
+    , readVal :: Transport -> ThriftType -> IO ThriftVal
+  }
 
-version1 :: Int32
-version1 = fromIntegral (0x80010000 :: Word32)
-
-class Protocol a where
-  getTransport :: Transport t => a t -> t
-
-  writeMessageBegin :: Transport t => a t -> (Text, MessageType, Int32) -> IO ()
-  writeMessageEnd :: Transport t => a t -> IO ()
-  writeMessageEnd _ = return ()
-  
-  readMessageBegin :: Transport t => a t -> IO (Text, MessageType, Int32)
-  readMessageEnd :: Transport t => a t -> IO ()
-  readMessageEnd _ = return ()
-
-  serializeVal :: Transport t => a t -> ThriftVal -> ByteString
-  deserializeVal :: Transport t => a t -> ThriftType -> ByteString -> ThriftVal
-
-  writeVal :: Transport t => a t -> ThriftVal -> IO ()
-  writeVal p = tWrite (getTransport p) . serializeVal p
-  readVal :: Transport t => a t -> ThriftType -> IO ThriftVal
+defaultProtocol :: Protocol
+defaultProtocol =  Protocol
+    { writeMessageBegin = \_ _ -> undefined
+    , writeMessageEnd = \_ -> return ()
+    , readMessageBegin = \_ -> undefined
+    , readMessageEnd = \_ -> return ()
+    , serializeVal = \_ _ -> undefined
+    , deserializeVal = \_ _ _ -> undefined
+    , writeVal = \_ _ -> undefined
+    , readVal = \_ _ -> undefined
+  }
+versionMask = (fromIntegral (0xffff0000 :: Word32)) :: Int32
+version1 = (fromIntegral (0x80010000 :: Word32)) :: Int32
 
 data ProtocolExnType
     = PE_UNKNOWN
@@ -105,10 +109,10 @@ getTypeOf v =  case v of
   TBinary{} -> T_BINARY
   TDouble{} -> T_DOUBLE
 
-runParser :: (Protocol p, Transport t, Show a) => p t -> Parser a -> IO a
-runParser prot p = refill >>= getResult . parse p
+runParser :: Show a => Transport -> Parser a -> IO a
+runParser trans p = refill >>= getResult . parse p
   where
-    refill = handle handleEOF $ toStrict <$> tReadAll (getTransport prot) 1
+    refill = handle handleEOF $ toStrict <$> tReadAll trans 1
     getResult (Done _ a) = return a
     getResult (Partial k) = refill >>= getResult . k
     getResult f = throw $ ProtocolExn PE_INVALID_DATA (show f)

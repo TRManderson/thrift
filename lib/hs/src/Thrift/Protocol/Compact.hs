@@ -24,7 +24,7 @@
 
 module Thrift.Protocol.Compact
     ( module Thrift.Protocol
-    , CompactProtocol(..)
+    , compactProtocol
     ) where
 
 import Control.Applicative
@@ -52,8 +52,6 @@ import qualified Data.Text.Lazy as LT
 -- | the Compact Protocol implements the standard Thrift 'TCompactProcotol'
 -- which is similar to the 'TBinaryProtocol', but takes less space on the wire.
 -- Integral types are encoded using as varints.
-data CompactProtocol a = CompactProtocol a
-                         -- ^ Constuct a 'CompactProtocol' with a 'Transport'
 
 protocolID, version, versionMask, typeMask, typeBits :: Word8
 protocolID  = 0x82 -- 1000 0010
@@ -65,10 +63,8 @@ typeShiftAmount :: Int
 typeShiftAmount = 5
 
 
-instance Protocol CompactProtocol where
-    getTransport (CompactProtocol t) = t
-
-    writeMessageBegin p (n, t, s) = tWrite (getTransport p) $ toLazyByteString $
+compactProtocol = defaultProtocol
+  { writeMessageBegin = \transport (n, t, s) -> tWrite transport $ toLazyByteString $
       B.word8 protocolID <>
       B.word8 ((version .&. versionMask) .|.
               (((fromIntegral $ fromEnum t) `shiftL`
@@ -76,7 +72,7 @@ instance Protocol CompactProtocol where
       buildVarint (i32ToZigZag s) <>
       buildCompactValue (TString $ encodeUtf8 n)
     
-    readMessageBegin p = runParser p $ do
+  , readMessageBegin = \transport -> runParser transport $ do
       pid <- fromIntegral <$> P.anyWord8
       when (pid /= protocolID) $ error "Bad Protocol ID"
       w <- fromIntegral <$> P.anyWord8
@@ -87,14 +83,14 @@ instance Protocol CompactProtocol where
       TString name <- parseCompactValue T_STRING
       return (decodeUtf8 name, toEnum $ fromIntegral $ typ, seqId)
 
-    serializeVal _ = toLazyByteString . buildCompactValue
-    deserializeVal _ ty bs =
+  , serializeVal = \_ -> toLazyByteString . buildCompactValue
+  , deserializeVal = \_ ty bs ->
       case LP.eitherResult $ LP.parse (parseCompactValue ty) bs of
         Left s -> error s
         Right val -> val
 
-    readVal p ty = runParser p $ parseCompactValue ty
-
+  , readVal = \transport ty -> runParser transport $ parseCompactValue ty
+  }
 
 -- | Writing Functions
 buildCompactValue :: ThriftVal -> Builder

@@ -20,7 +20,6 @@
 
 module Thrift.Transport.HttpClient
     ( module Thrift.Transport
-    , HttpClient (..)
     , openHttpClient
 ) where
 
@@ -37,13 +36,6 @@ import qualified Data.ByteString.Lazy as LBS
 
 -- | 'HttpClient', or THttpClient implements the Thrift Transport
 -- | Layer over http or https.
-data HttpClient =
-    HttpClient {
-      hstream :: HandleStream LBS.ByteString,
-      uri :: URI,
-      writeBuffer :: WriteBuffer,
-      readBuffer :: ReadBuffer
-    }
 
 uriAuth :: URI -> URIAuth
 uriAuth = fromJust . uriAuthority
@@ -62,40 +54,34 @@ port uri_ =
       httpPort = 80
 
 -- | Use 'openHttpClient' to create an HttpClient connected to @uri@
-openHttpClient :: URI -> IO HttpClient
+openHttpClient :: URI -> IO Transport
 openHttpClient uri_ = do
-  stream <- openTCPConnection (host uri_) (port uri_)
+  stream <- openTCPConnection (host uri_) (port uri_) :: IO (HandleStream LBS.ByteString)
   wbuf <- newWriteBuffer
   rbuf <- newReadBuffer
-  return $ HttpClient stream uri_ wbuf rbuf
-
-instance Transport HttpClient where
-
-    tClose = close . hstream
-
-    tPeek = peekBuf . readBuffer
-
-    tRead = readBuf . readBuffer
-
-    tWrite = writeBuf . writeBuffer
-
-    tFlush hclient = do
-      body <- flushBuf $ writeBuffer hclient
-      let request = Request {
-                      rqURI = uri hclient,
-                      rqHeaders = [
-                       mkHeader HdrContentType "application/x-thrift",
-                       mkHeader HdrContentLength $  show $ LBS.length body],
-                      rqMethod = POST,
-                      rqBody = body
-                    }
-
-      res <- sendHTTP (hstream hclient) request
-      case res of
-        Right response ->
-          fillBuf (readBuffer hclient) (rspBody response)
-        Left _ ->
-            throw $ TransportExn "THttpConnection: HTTP failure from server" TE_UNKNOWN
-      return ()
-
-    tIsOpen _ = return True
+  let
+    self = Transport
+      { tClose = close stream
+      , tPeek = peekBuf rbuf
+      , tRead = readBuf rbuf
+      , tWrite = writeBuf wbuf
+      , tFlush = do
+          body <- flushBuf wbuf
+          let request = Request {
+                          rqURI = uri_,
+                          rqHeaders = [
+                           mkHeader HdrContentType "application/x-thrift",
+                           mkHeader HdrContentLength $  show $ LBS.length body],
+                          rqMethod = POST,
+                          rqBody = body
+                        }
+          res <- sendHTTP stream request
+          case res of
+            Right response ->
+              fillBuf rbuf (rspBody response)
+            Left _ ->
+              throw $ TransportExn "THttpConnection: HTTP failure from server" TE_UNKNOWN
+          return ()
+      , tIsOpen = return True
+      }
+  return self

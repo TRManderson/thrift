@@ -24,7 +24,7 @@
 
 module Thrift.Protocol.Binary
     ( module Thrift.Protocol
-    , BinaryProtocol(..)
+    , binaryProtocol
     ) where
 
 import Control.Exception ( throw )
@@ -47,21 +47,17 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.HashMap.Strict as Map
 import qualified Data.Text.Lazy as LT
 
-data BinaryProtocol a = BinaryProtocol a
-
 -- NOTE: Reading and Writing functions rely on Builders and Data.Binary to
 -- encode and decode data.  Data.Binary assumes that the binary values it is
 -- encoding to and decoding from are in BIG ENDIAN format, and converts the
 -- endianness as necessary to match the local machine.
-instance Protocol BinaryProtocol where
-    getTransport (BinaryProtocol t) = t
-
-    writeMessageBegin p (n, t, s) = tWrite (getTransport p) $ toLazyByteString $
-        buildBinaryValue (TI32 (version1 .|. fromIntegral (fromEnum t))) <>
-        buildBinaryValue (TString $ encodeUtf8 n) <>
-        buildBinaryValue (TI32 s)
-
-    readMessageBegin p = runParser p $ do
+binaryProtocol :: Protocol
+binaryProtocol = defaultProtocol
+  { writeMessageBegin = \transport (n, t, s) -> tWrite transport $ toLazyByteString $
+      buildBinaryValue (TI32 (version1  .|. fromIntegral (fromEnum t))) <>
+      buildBinaryValue (TString $ encodeUtf8 n) <>
+      buildBinaryValue (TI32 s)
+  , readMessageBegin = \transport -> runParser transport $ do
       TI32 ver <- parseBinaryValue T_I32
       if ver .&. versionMask /= version1
         then throw $ ProtocolExn PE_BAD_VERSION "Missing version identifier"
@@ -70,13 +66,14 @@ instance Protocol BinaryProtocol where
           TI32 sz <- parseBinaryValue T_I32
           return (decodeUtf8 s, toEnum $ fromIntegral $ ver .&. 0xFF, sz)
 
-    serializeVal _ = toLazyByteString . buildBinaryValue
-    deserializeVal _ ty bs =
+  , serializeVal = \_ -> toLazyByteString . buildBinaryValue
+  , deserializeVal = \_ ty bs ->
       case LP.eitherResult $ LP.parse (parseBinaryValue ty) bs of
         Left s -> error s
         Right val -> val
 
-    readVal p = runParser p . parseBinaryValue
+  , readVal = \transport -> runParser transport . parseBinaryValue
+  }
 
 -- | Writing Functions
 buildBinaryValue :: ThriftVal -> Builder

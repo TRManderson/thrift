@@ -21,7 +21,6 @@
 
 module Thrift.Transport.Framed
     ( module Thrift.Transport
-    , FramedTransport
     , openFramedTransport
     ) where
 
@@ -32,67 +31,55 @@ import Data.Int (Int32)
 import qualified Data.Binary as B
 import qualified Data.ByteString.Lazy as LBS
 
-
--- | FramedTransport wraps a given transport in framed mode.
-data FramedTransport t = FramedTransport {
-      wrappedTrans :: t,           -- ^ Underlying transport.
-      writeBuffer  :: WriteBuffer, -- ^ Write buffer.
-      readBuffer   :: ReadBuffer   -- ^ Read buffer.
-    }
-
 -- | Create a new framed transport which wraps the given transport.
-openFramedTransport :: Transport t => t -> IO (FramedTransport t)
+openFramedTransport :: Transport -> IO Transport
 openFramedTransport trans = do
   wbuf <- newWriteBuffer
   rbuf <- newReadBuffer
-  return FramedTransport{ wrappedTrans = trans, writeBuffer = wbuf, readBuffer = rbuf }
-
-instance Transport t => Transport (FramedTransport t) where
-
-    tClose = tClose . wrappedTrans
-
-    tRead trans n = do
-      -- First, check the read buffer for any data.
-      bs <- readBuf (readBuffer trans) n
-      if LBS.null bs
-         then
-         -- When the buffer is empty, read another frame from the
-         -- underlying transport.
-           do len <- readFrame trans
+  let
+    self = Transport
+      { tIsOpen = tIsOpen trans
+      , tClose = tClose trans
+      , tRead = \n -> do
+          -- First, check the read buffer for any data.
+          bs <- readBuf rbuf n
+          if LBS.null bs
+             then
+             -- When the buffer is empty, read another frame from the
+             -- underlying transport.
+               do len <- readFrame trans rbuf
+                  if len > 0
+                     then tRead self n
+                     else return bs
+             else return bs
+      , tPeek = do
+          mw <- peekBuf rbuf
+          case mw of
+            Just _ -> return mw
+            Nothing -> do
+              len <- readFrame trans rbuf
               if len > 0
-                 then tRead trans n
-                 else return bs
-         else return bs
-    tPeek trans = do
-      mw <- peekBuf (readBuffer trans)
-      case mw of
-        Just _ -> return mw
-        Nothing -> do
-          len <- readFrame trans
-          if len > 0
-             then tPeek trans
-             else return Nothing
+                 then tPeek self
+                 else return Nothing
+      , tWrite = writeBuf wbuf
+      , tFlush =  do
+          bs <- flushBuf wbuf
+          let szBs = B.encode $ (fromIntegral $ LBS.length bs :: Int32)
+          tWrite trans szBs
+          tWrite trans bs
+          tFlush trans
+      }
+  return self
 
-    tWrite = writeBuf . writeBuffer
-
-    tFlush trans = do
-      bs <- flushBuf (writeBuffer trans)
-      let szBs = B.encode $ (fromIntegral $ LBS.length bs :: Int32)
-      tWrite (wrappedTrans trans) szBs
-      tWrite (wrappedTrans trans) bs
-      tFlush (wrappedTrans trans)
-
-    tIsOpen = tIsOpen . wrappedTrans
-
-readFrame :: Transport t => FramedTransport t -> IO Int
-readFrame trans = do
+readFrame :: Transport -> ReadBuffer -> IO Int
+readFrame trans rbuf = do
   -- Read and decode the frame size.
-  szBs <- tRead (wrappedTrans trans) 4
+  szBs <- tRead trans 4
   let sz = fromIntegral (B.decode szBs :: Int32)
 
   -- Read the frame and stuff it into the read buffer.
-  bs <- tRead (wrappedTrans trans) sz
-  fillBuf (readBuffer trans) bs
+  bs <- tRead trans sz
+  fillBuf rbuf bs
 
   -- Return the frame size so that the caller knows whether to expect
   -- something in the read buffer or not.

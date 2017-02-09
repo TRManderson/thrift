@@ -25,6 +25,7 @@
 module Thrift.Transport.Handle
     ( module Thrift.Transport
     , HandleSource(..)
+    , handleTransport
     ) where
 
 import Control.Exception ( catch, throw )
@@ -41,25 +42,26 @@ import Thrift.Transport
 import qualified Data.ByteString.Lazy as LBS
 import Data.Monoid
 
-instance Transport Handle where
-    tIsOpen = hIsOpen
-    tClose = hClose
-    tRead h n = LBS.hGet h n `Control.Exception.catch` handleEOF mempty
-    tPeek h = (Just . c2w <$> hLookAhead h) `Control.Exception.catch` handleEOF Nothing
-    tWrite = LBS.hPut
-    tFlush = hFlush
-
+handleTransport :: Handle -> Transport
+handleTransport handle = Transport
+  { tIsOpen = hIsOpen handle
+  , tClose = hClose handle
+  , tRead = \n -> LBS.hGet handle n `Control.Exception.catch` handleEOF mempty
+  , tPeek = (Just . c2w <$> hLookAhead handle) `Control.Exception.catch` handleEOF Nothing
+  , tWrite = LBS.hPut handle
+  , tFlush = hFlush handle
+  }
 
 -- | Type class for all types that can open a Handle. This class is used to
 -- replace tOpen in the Transport type class.
 class HandleSource s where
-    hOpen :: s -> IO Handle
+    hOpen :: s -> IO Transport
 
 instance HandleSource FilePath where
-    hOpen s = openFile s ReadWriteMode
+    hOpen s = handleTransport <$> openFile s ReadWriteMode
 
 instance HandleSource (HostName, PortID) where
-    hOpen = uncurry connectTo
+    hOpen = fmap handleTransport . uncurry connectTo
 
 
 handleEOF :: a -> IOError -> IO a

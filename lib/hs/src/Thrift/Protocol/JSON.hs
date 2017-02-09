@@ -25,7 +25,7 @@
 
 module Thrift.Protocol.JSON
     ( module Thrift.Protocol
-    , JSONProtocol(..)
+    , jsonProtocol
     ) where
 
 import Control.Applicative
@@ -54,22 +54,15 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import qualified Data.Text.Lazy as LT
 
--- | The JSON Protocol data uses the standard 'TJSONProtocol'.  Data is
--- encoded as a JSON 'ByteString'
-data JSONProtocol t = JSONProtocol t
-                      -- ^ Construct a 'JSONProtocol' with a 'Transport'
-
-instance Protocol JSONProtocol where
-    getTransport (JSONProtocol t) = t
-
-    writeMessageBegin (JSONProtocol t) (s, ty, sq) = tWrite t $ toLazyByteString $
+jsonProtocol = defaultProtocol
+  { writeMessageBegin = \t (s, ty, sq) -> tWrite t $ toLazyByteString $
       B.char8 '[' <> buildShowable (1 :: Int32) <>
       B.string8 ",\"" <> escape (encodeUtf8 s) <> B.char8 '\"' <>
       B.char8 ',' <> buildShowable (fromEnum ty) <>
       B.char8 ',' <> buildShowable sq <>
       B.char8 ','
-    writeMessageEnd (JSONProtocol t) = tWrite t "]"
-    readMessageBegin p = runParser p $ skipSpace *> do
+  , writeMessageEnd = \t -> tWrite t $ "]"
+  , readMessageBegin = \t -> runParser t $ skipSpace *> do
       _ver :: Int32 <- lexeme (PC.char8 '[') *> lexeme (signed decimal)
       bs <- lexeme (PC.char8 ',') *> lexeme escapedString
       case decodeUtf8' bs of
@@ -79,16 +72,16 @@ instance Protocol JSONProtocol where
           seqNum <- lexeme (PC.char8 ',') *> lexeme (signed decimal)
           _ <- PC.char8 ','
           return (str, ty, seqNum)
-    readMessageEnd p = void $ runParser p (PC.char8 ']')
+  , readMessageEnd = \t -> void $ runParser t (PC.char8 ']')
 
-    serializeVal _ = toLazyByteString . buildJSONValue
-    deserializeVal _ ty bs =
+  , serializeVal = \_ -> toLazyByteString . buildJSONValue
+  , deserializeVal = \_ ty bs ->
       case LP.eitherResult $ LP.parse (parseJSONValue ty) bs of
         Left s -> error s
         Right val -> val
 
-    readVal p ty = runParser p $ skipSpace *> parseJSONValue ty
-
+  , readVal = \t ty -> runParser t $ skipSpace *> parseJSONValue ty
+  }
 
 -- Writing Functions
 

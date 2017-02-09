@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TemplateHaskell #-}
 --
 -- Licensed to the Apache Software Foundation (ASF) under one
 -- or more contributor license agreements. See the NOTICE file
@@ -21,8 +21,10 @@
 
 module Thrift.Transport
   ( Transport(..)
+  , ServerTransport(..)
   , TransportExn(..)
   , TransportExnType(..)
+  , tReadAll
   ) where
 
 import Control.Monad ( when )
@@ -34,23 +36,20 @@ import Data.Word
 import qualified Data.ByteString.Lazy as LBS
 import Data.Monoid
 
-class Transport a where
-    tIsOpen :: a -> IO Bool
-    tClose  :: a -> IO ()
-    tRead   :: a -> Int -> IO LBS.ByteString
-    tPeek   :: a -> IO (Maybe Word8)
-    tWrite  :: a -> LBS.ByteString -> IO ()
-    tFlush  :: a -> IO ()
-    tReadAll :: a -> Int -> IO LBS.ByteString
+data Transport = Transport
+  { tIsOpen :: IO Bool
+  , tClose :: IO ()
+  , tRead :: Int -> IO LBS.ByteString
+  , tPeek :: IO (Maybe Word8)
+  , tWrite :: LBS.ByteString -> IO ()
+  , tFlush :: IO ()
+  }
 
-    tReadAll _ 0 = return mempty
-    tReadAll a len = do
-        result <- tRead a len
-        let rlen = fromIntegral $ LBS.length result
-        when (rlen == 0) (throw $ TransportExn "Cannot read. Remote side has closed." TE_UNKNOWN)
-        if len <= rlen
-          then return result
-          else (result `mappend`) <$> tReadAll a (len - rlen)
+data ServerTransport = ServerTransport
+  { stListen :: IO ()
+  , stAccept :: IO (Transport)
+  , stClose :: IO ()
+  }
 
 data TransportExn = TransportExn String TransportExnType
   deriving ( Show, Typeable )
@@ -63,3 +62,13 @@ data TransportExnType
     | TE_TIMED_OUT
     | TE_END_OF_FILE
       deriving ( Eq, Show, Typeable )
+
+tReadAll :: Transport -> Int -> IO LBS.ByteString
+tReadAll _ 0 = return mempty
+tReadAll t len = do
+    result <- tRead t len
+    let rlen = fromIntegral $ LBS.length result
+    when (rlen == 0) (throw $ TransportExn "Cannot read. Remote side has closed." TE_UNKNOWN)
+    if len <= rlen
+      then return result
+      else (result `mappend`) <$> tReadAll t (len - rlen)

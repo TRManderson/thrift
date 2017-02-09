@@ -20,17 +20,16 @@
 --
 
 module Thrift.Transport.Empty
-       ( EmptyTransport(..)
+       ( emptyTransport
        ) where
 
 import Thrift.Transport
 
-data EmptyTransport = EmptyTransport
-
-instance Transport EmptyTransport where
-    tIsOpen = const $ return False
-    tClose  = const $ return ()
-    tRead _ _ = return ""
-    tPeek = const $ return Nothing
-    tWrite _ _ = return ()
-    tFlush = const$ return ()
+emptyTransport = Transport
+  { tIsOpen = return False
+  , tClose = return ()
+  , tRead = \ _ -> return ""
+  , tPeek = return Nothing
+  , tWrite = \ _ -> return ()
+  , tFlush = return ()
+  }

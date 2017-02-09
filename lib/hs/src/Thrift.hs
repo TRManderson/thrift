@@ -90,16 +90,16 @@ data AppExn = AppExn { ae_type :: AppExnType, ae_message :: String }
   deriving ( Show, Typeable )
 instance Exception AppExn
 
-writeAppExn :: (Protocol p, Transport t) => p t -> AppExn -> IO ()
-writeAppExn pt ae = writeVal pt $ TStruct $ Map.fromList
+writeAppExn :: Protocol -> Transport -> AppExn -> IO ()
+writeAppExn p t ae = writeVal p t $ TStruct $ Map.fromList
                     [ (1, ("message", TString $ encodeUtf8 $ pack $ ae_message ae))
                     , (2, ("type", TI32 $ fromIntegral $ fromEnum (ae_type ae)))
                     ]
 
-readAppExn :: (Protocol p, Transport t) => p t -> IO AppExn
-readAppExn pt = do
+readAppExn :: Protocol -> Transport -> IO AppExn
+readAppExn p t = do
     let typemap = Map.fromList [(1,("message",T_STRING)),(2,("type",T_I32))]
-    TStruct fields <- readVal pt $ T_STRUCT typemap
+    TStruct fields <- readVal p t $ T_STRUCT typemap
     return $ readAppExnFields fields
 
 readAppExnFields :: Map.HashMap Int16 (Text, ThriftVal) -> AppExn
